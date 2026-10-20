@@ -1,0 +1,94 @@
+name: Build APK Tukangku
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [index.html]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Siapkan proyek Android
+        run: |
+          mkdir -p www
+          cp index.html manifest.webmanifest sw.js icon-192.png icon-512.png icon-maskable-512.png www/
+          npm init -y
+          npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          npx cap init Tukangku id.borneotech.tukangku --web-dir=www
+          npx cap add android
+
+      - name: Ikon, warna, dan splash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq imagemagick
+          R=android/app/src/main/res
+          for s in "mdpi 48" "hdpi 72" "xhdpi 96" "xxhdpi 144" "xxxhdpi 192"; do
+            set -- $s
+            mkdir -p $R/mipmap-$1
+            convert icon-512.png -resize $2x$2 $R/mipmap-$1/ic_launcher.png
+            cp $R/mipmap-$1/ic_launcher.png $R/mipmap-$1/ic_launcher_round.png
+          done
+          rm -rf $R/mipmap-anydpi-v26
+          find $R -name 'splash.png' -delete
+          mkdir -p $R/drawable $R/values
+          cat > $R/drawable/splash.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item><shape android:shape="rectangle"><solid android:color="#F6F4EF"/></shape></item>
+              <item android:width="160dp" android:height="160dp" android:gravity="center"><bitmap android:src="@mipmap/ic_launcher" android:gravity="fill"/></item>
+          </layer-list>
+          XML
+          cat > $R/values/colors.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="colorPrimary">#C2570C</color>
+              <color name="colorPrimaryDark">#9A4309</color>
+              <color name="colorAccent">#C2570C</color>
+          </resources>
+          XML
+          sed -i 's/targetSdkVersion = 35/targetSdkVersion = 34/' android/variables.gradle
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"1.0.${{ github.run_number }}\"/" android/app/build.gradle
+
+      - name: Kunci tanda tangan tetap
+        run: |
+          if [ -f debug.keystore ]; then
+            mkdir -p ~/.android
+            cp debug.keystore ~/.android/debug.keystore
+          fi
+
+      - name: Bangun APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Siapkan file APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Tukangku.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tukangku-APK
+          path: Tukangku.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Tukangku v${{ github.run_number }}
+          files: Tukangku.apk
